@@ -112,117 +112,134 @@ def is_older_than_n_days(date_text: str, days: int = DAYS_BACK) -> bool:
 # Login
 # ---------------------------------------------------------------------------
 
+def _save_login_debug(page) -> None:
+    """Save a screenshot and HTML snapshot to help diagnose login failures."""
+    debug_dir = OUTPUT_DIR / "debug"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        page.screenshot(path=str(debug_dir / "login_failed.png"), full_page=True)
+        (debug_dir / "login_failed.html").write_text(page.content(), encoding="utf-8")
+        print(f"[!] Login debug snapshot saved to {debug_dir}/")
+    except Exception:
+        pass
+
+
+def _try_fill_and_submit(page) -> bool:
+    """
+    Attempt to fill email+password and submit the currently visible login form.
+    Returns True if the form was found and submitted.
+    """
+    email_sel = "input[type='email'], input[name='email'], input[placeholder*='email' i]"
+    try:
+        page.wait_for_selector(email_sel, timeout=8000)
+    except PlaywrightTimeoutError:
+        return False
+
+    page.locator(email_sel).first.fill(EMAIL)
+    page.locator("input[type='password']").first.fill(PASSWORD)
+
+    submit_sel = (
+        "button[type='submit'], input[type='submit'], "
+        "button:text-is('Sign In'), button:text-is('Login'), button:text-is('Log In'), "
+        "button:text-is('SIGN IN'), button:text-is('LOGIN')"
+    )
+    page.locator(submit_sel).first.click()
+    return True
+
+
 def login(page) -> bool:
     """
-    Navigate to iimjobs.com, find the login form, and authenticate.
+    Log in to iimjobs.com.  Handles the modal (Sign Up / Log In tabs) pattern
+    as well as a dedicated /login page fallback.
     Returns True on success.
     """
     if not EMAIL or not PASSWORD:
         print("[ERROR] IIMJOBS_EMAIL and IIMJOBS_PASSWORD must be set in your .env file.")
         return False
 
-    print(f"[*] Navigating to {BASE_URL} ...")
-    page.goto(BASE_URL, wait_until="domcontentloaded", timeout=30000)
+    # ------------------------------------------------------------------
+    # Attempt 1: navigate directly to /#login to open the login modal
+    # ------------------------------------------------------------------
+    print(f"[*] Navigating to {BASE_URL}/#login ...")
+    page.goto(f"{BASE_URL}/#login", wait_until="domcontentloaded", timeout=30000)
+    time.sleep(1.5)
 
-    # Try clicking a Sign In / Login link to open the login form or redirect
-    login_link_selectors = [
-        "a[href*='login']",
-        "a[href*='signin']",
-        "a:text-is('Sign In')",
+    # iimjobs uses a modal with "Sign Up" and "Log In" tabs.
+    # The URL may land on #signup; we must click the Login tab first.
+    login_tab_selectors = [
+        # Explicit Log In tab inside a modal
+        "a[href='#login']:visible",
+        "a[href*='login']:visible",
+        "li:has(a[href='#login']):visible",
+        # Text-based tab buttons
+        "a:text-is('Log In')",
         "a:text-is('Login')",
-        "button:text-is('Sign In')",
+        "a:text-is('Sign In')",
+        "button:text-is('Log In')",
         "button:text-is('Login')",
-        ".sign-in",
-        "#sign-in",
+        "[class*='login-tab']",
+        "[class*='loginTab']",
+        "[data-tab='login']",
+        "[href='#login']",
     ]
-
-    clicked = False
-    for sel in login_link_selectors:
+    for sel in login_tab_selectors:
         try:
             el = page.locator(sel).first
-            if el.is_visible(timeout=2000):
+            if el.is_visible(timeout=1500):
                 el.click()
-                clicked = True
-                print(f"[*] Clicked login trigger: {sel}")
+                print(f"[*] Clicked login tab: {sel}")
+                time.sleep(0.8)
                 break
         except Exception:
             continue
 
-    if not clicked:
-        # Fall back to the direct login page
-        print("[*] No login link found on homepage, trying /login directly ...")
+    submitted = _try_fill_and_submit(page)
+
+    # ------------------------------------------------------------------
+    # Attempt 2: dedicated /login page
+    # ------------------------------------------------------------------
+    if not submitted:
+        print("[*] Modal login failed — trying /login page ...")
         page.goto(f"{BASE_URL}/login", wait_until="domcontentloaded", timeout=20000)
+        time.sleep(1)
+        submitted = _try_fill_and_submit(page)
 
-    # Wait for email field
-    try:
-        page.wait_for_selector(
-            "input[type='email'], input[name='email'], input[placeholder*='email' i]",
-            timeout=10000,
-        )
-    except PlaywrightTimeoutError:
-        # Maybe the login modal is elsewhere
-        print("[!] Could not find email field. Trying /login URL ...")
-        page.goto(f"{BASE_URL}/login", wait_until="domcontentloaded", timeout=20000)
-        page.wait_for_selector(
-            "input[type='email'], input[name='email'], input[placeholder*='email' i]",
-            timeout=10000,
-        )
+    if not submitted:
+        print("[ERROR] Could not find login form on any page.")
+        _save_login_debug(page)
+        return False
 
-    # Fill credentials
-    email_field = page.locator(
-        "input[type='email'], input[name='email'], input[placeholder*='email' i]"
-    ).first
-    email_field.fill(EMAIL)
-
-    password_field = page.locator("input[type='password']").first
-    password_field.fill(PASSWORD)
-
-    # Submit
-    submit_sel = (
-        "button[type='submit'], "
-        "input[type='submit'], "
-        "button:text-is('Sign In'), "
-        "button:text-is('Login'), "
-        "button:text-is('Log In')"
-    )
-    page.locator(submit_sel).first.click()
-
-    # Wait for page to settle after submit
+    # Wait for redirect after submit
     try:
         page.wait_for_load_state("networkidle", timeout=15000)
     except PlaywrightTimeoutError:
-        page.wait_for_load_state("domcontentloaded", timeout=10000)
+        pass
     time.sleep(2)
 
-    # Verify login success
     post_url = page.url
-    logout_visible = page.locator(
-        "a:text-is('Logout'), a:text-is('Sign Out'), "
-        "a[href*='logout'], a[href*='signout'], "
-        "[class*='logout'], [class*='sign-out']"
-    ).count()
+    print(f"[*] Post-login URL: {post_url}")
 
-    if logout_visible > 0 or "dashboard" in post_url or "profile" in post_url:
-        print("[+] Login successful!")
+    # Success signals
+    if page.locator(
+        "a[href*='logout'], a[href*='signout'], "
+        "[class*='logout'], [class*='sign-out'], "
+        "a:text-is('Logout'), a:text-is('Sign Out')"
+    ).count() > 0:
+        print("[+] Login successful! (logout link found)")
         return True
 
-    # Check for error banners
-    error_el = page.locator(".error, .alert-danger, [class*='error-msg'], [class*='login-error']").first
-    if error_el.count() > 0:
-        try:
-            if error_el.is_visible(timeout=2000):
-                print(f"[ERROR] Login failed: {error_el.text_content().strip()}")
-                return False
-        except Exception:
-            pass
+    if any(k in post_url for k in ("dashboard", "profile", "myjobs", "jobfeed")):
+        print("[+] Login successful! (redirected to authenticated page)")
+        return True
 
-    # Still on login page → failed
-    if "login" in page.url.lower() or "signin" in page.url.lower():
-        print("[ERROR] Login failed — still on login page after submit.")
+    # Still on login/signup page → failed
+    if any(k in post_url for k in ("login", "signin", "signup", "#signup", "#login")):
+        print(f"[ERROR] Login failed — still on auth page: {post_url}")
+        _save_login_debug(page)
         return False
 
-    # Otherwise, assume success
-    print(f"[*] Login status unclear (URL: {page.url}) — proceeding anyway.")
+    # Not obviously failed — proceed and let the feed page tell us
+    print(f"[*] Login state ambiguous (URL: {post_url}) — proceeding to feed.")
     return True
 
 
