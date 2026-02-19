@@ -234,64 +234,102 @@ def extract_card(card) -> dict | None:
     """Extract job details from a single job-card element on the listing page."""
     job = {}
 
-    # Title + URL
-    title_link = card.locator(
-        "a.job-title, h2 a, h3 a, .title a, "
-        "a[href*='/job/'], a[href*='/j/'], a[href*='iimjobs.com']"
-    ).first
-    if title_link.count() == 0:
+    # Use JS to pull key fields directly from the element —
+    # avoids selector brittleness when class names are opaque.
+    try:
+        data = card.evaluate("""el => {
+            // --- Title + URL ---
+            const linkEl = el.querySelector(
+                'a[href*="/j/"], a[href*="/job/"], a.job-title, h2 a, h3 a, h4 a, .title a'
+            );
+            if (!linkEl) return null;
+            const title = (linkEl.innerText || linkEl.textContent || '').trim();
+            if (!title) return null;
+            const href = linkEl.getAttribute('href') || '';
+
+            // --- All text nodes in the card, for fallback parsing ---
+            const allText = el.innerText || el.textContent || '';
+
+            // --- Posted date: prefer elements whose text contains 'ago/today/yesterday' ---
+            let postedDate = '';
+            const allEls = el.querySelectorAll('*');
+            for (const e of allEls) {
+                if (e.children.length > 0) continue;  // leaf nodes only
+                const t = (e.innerText || e.textContent || '').trim().toLowerCase();
+                if (t && (t.includes(' ago') || t === 'today' || t === 'yesterday'
+                          || /\\d+\\s+(day|week|month|hour|min)/.test(t))) {
+                    postedDate = (e.innerText || e.textContent || '').trim();
+                    break;
+                }
+            }
+            // Fallback: regex on full card text
+            if (!postedDate) {
+                const m = allText.match(
+                    /(\\d+\\s+(day|week|month|hour|min)[s]?\\s+ago|today|yesterday)/i
+                );
+                if (m) postedDate = m[0];
+            }
+
+            // --- Company: element with class containing 'company'/'employer'/'org' ---
+            let company = '';
+            const compEl = el.querySelector(
+                '[class*="company"],[class*="employer"],[class*="org-name"],' +
+                '[class*="comp-name"],[class*="companyName"],[class*="brand"]'
+            );
+            if (compEl) company = (compEl.innerText || compEl.textContent || '').trim();
+
+            // --- Experience ---
+            let experience = '';
+            const expEl = el.querySelector(
+                '[class*="exp"],[class*="experience"],[class*="yrs"],[class*="year"]'
+            );
+            if (expEl) experience = (expEl.innerText || expEl.textContent || '').trim();
+
+            // --- Location ---
+            let location = '';
+            const locEl = el.querySelector(
+                '[class*="loc"],[class*="location"],[class*="city"],[class*="cities"]'
+            );
+            if (locEl) location = (locEl.innerText || locEl.textContent || '').trim();
+
+            // --- Salary ---
+            let salary = '';
+            const salEl = el.querySelector(
+                '[class*="sal"],[class*="salary"],[class*="ctc"],[class*="lpa"]'
+            );
+            if (salEl) salary = (salEl.innerText || salEl.textContent || '').trim();
+
+            // --- Skills ---
+            const skillEls = el.querySelectorAll('[class*="skill"],[class*="tag"],[class*="keyword"]');
+            const skills = Array.from(skillEls)
+                .map(s => (s.innerText || s.textContent || '').trim())
+                .filter(s => s.length > 0 && s.length < 60);
+
+            return { title, href, postedDate, company, experience, location, salary, skills };
+        }""")
+    except Exception:
+        data = None
+
+    if not data:
         return None
 
-    job["title"] = (title_link.text_content() or "").strip()
-    href = title_link.get_attribute("href") or ""
-    job["url"] = href if href.startswith("http") else f"{BASE_URL}{href}"
-
+    job["title"] = data.get("title", "").strip()
     if not job["title"]:
         return None
 
-    # Posted date (first selector that resolves)
-    date_selectors = [
-        "[class*='date']",
-        "[class*='posted']",
-        "[class*='time']",
-        "span:has-text(' ago')",
-        "span:has-text('today')",
-        "span:has-text('yesterday')",
-    ]
-    date_text = ""
-    for sel in date_selectors:
-        el = card.locator(sel).first
-        if el.count() > 0:
-            candidate = (el.text_content() or "").strip()
-            if candidate:
-                date_text = candidate
-                break
-    job["posted_date"] = date_text
-
-    # Company
-    company_el = card.locator("[class*='company'], [class*='employer'], .org-name, .comp-name").first
-    if company_el.count() > 0:
-        job["company"] = (company_el.text_content() or "").strip()
-
-    # Experience
-    exp_el = card.locator("[class*='exp'], [class*='experience'], [class*='yrs']").first
-    if exp_el.count() > 0:
-        job["experience"] = (exp_el.text_content() or "").strip()
-
-    # Location
-    loc_el = card.locator("[class*='loc'], [class*='location'], .city, .cities").first
-    if loc_el.count() > 0:
-        job["location"] = (loc_el.text_content() or "").strip()
-
-    # Salary / CTC
-    sal_el = card.locator("[class*='sal'], [class*='salary'], [class*='ctc'], [class*='lpa']").first
-    if sal_el.count() > 0:
-        job["salary"] = (sal_el.text_content() or "").strip()
-
-    # Skills / Tags
-    skill_els = card.locator("[class*='skill'], [class*='tag'], [class*='keyword']").all()
-    if skill_els:
-        job["skills"] = [s.text_content().strip() for s in skill_els if s.text_content().strip()]
+    href = data.get("href", "")
+    job["url"] = href if href.startswith("http") else f"{BASE_URL}{href}"
+    job["posted_date"] = data.get("postedDate", "")
+    if data.get("company"):
+        job["company"] = data["company"]
+    if data.get("experience"):
+        job["experience"] = data["experience"]
+    if data.get("location"):
+        job["location"] = data["location"]
+    if data.get("salary"):
+        job["salary"] = data["salary"]
+    if data.get("skills"):
+        job["skills"] = data["skills"]
 
     job["fetched_at"] = datetime.now().isoformat()
     return job
@@ -330,17 +368,25 @@ def fetch_all_jobs(page) -> list[dict]:
             print(f"[!] Timeout loading page {page_num}. Stopping.")
             break
 
-        # Small extra wait for dynamic content
-        time.sleep(2)
+        # Wait for job links to appear (up to 10s) before searching
+        try:
+            page.wait_for_selector(
+                "a[href*='/j/'], a[href*='/job/']", timeout=10000
+            )
+        except PlaywrightTimeoutError:
+            pass
+        time.sleep(1)
 
-        # Collect job card elements — try multiple selector strategies
+        # --- Strategy 1: known CSS class selectors ---
         card_selectors = [
-            # iimjobs specific
             ".job-list-item",
             ".job-card",
             "[class*='job-item']",
             "[class*='jobItem']",
             "[class*='job_item']",
+            "[class*='jobfeed']",
+            "[class*='feed-item']",
+            "[class*='feedItem']",
             "li.job",
             "div[data-job-id]",
             "div[data-jobid]",
@@ -348,12 +394,11 @@ def fetch_all_jobs(page) -> list[dict]:
             ".jobs-list > li",
             ".result",
             ".jobTuple",
-            ".jobTupleHeader",
-            # Generic fallbacks — any list-item/div containing a job link
-            "li:has(a[href*='/job/'])",
+            "[class*='tuple']",
+            "[class*='Tuple']",
             "li:has(a[href*='/j/'])",
-            "div:has(a[href*='/job/'])",
-            "article:has(a[href*='/job/'])",
+            "li:has(a[href*='/job/'])",
+            "tr:has(a[href*='/j/'])",
         ]
         cards = []
         for sel in card_selectors:
@@ -362,6 +407,45 @@ def fetch_all_jobs(page) -> list[dict]:
                 cards = found
                 print(f"[*] Using card selector '{sel}' — found {len(cards)} cards")
                 break
+
+        # --- Strategy 2: JS walk-up from job links (works with any class names) ---
+        if not cards:
+            print("[*] CSS selectors failed — trying JS walk-up from job links ...")
+            handles = page.evaluate_handle("""
+                () => {
+                    // Find all links that look like job detail pages
+                    const links = Array.from(
+                        document.querySelectorAll('a[href*="/j/"], a[href*="/job/"]')
+                    ).filter(a => {
+                        const href = a.getAttribute('href') || '';
+                        return /\\/(j|job)\\//.test(href) && a.textContent.trim().length > 5;
+                    });
+
+                    // For each link, walk up 3 levels to find the likely card container
+                    const seen = new Set();
+                    const containers = [];
+                    links.forEach(link => {
+                        let el = link;
+                        for (let i = 0; i < 4; i++) {
+                            if (!el.parentElement || el.parentElement === document.body) break;
+                            el = el.parentElement;
+                        }
+                        if (!seen.has(el)) {
+                            seen.add(el);
+                            containers.push(el);
+                        }
+                    });
+                    return containers;
+                }
+            """)
+            # Convert JSHandle array to Playwright element handles
+            count = page.evaluate("els => els.length", handles)
+            if count:
+                cards = [
+                    page.evaluate_handle(f"(els) => els[{i}]", handles)
+                    for i in range(count)
+                ]
+                print(f"[*] JS walk-up found {len(cards)} job containers")
 
         if not cards:
             # Save debug snapshot so we can inspect the actual HTML
