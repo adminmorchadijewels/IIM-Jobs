@@ -30,6 +30,9 @@ load_dotenv()
 BASE_URL = "https://www.iimjobs.com"
 EMAIL = os.getenv("IIMJOBS_EMAIL")
 PASSWORD = os.getenv("IIMJOBS_PASSWORD")
+# Personalized feed URL — set IIMJOBS_FEED_URL in .env to use your own feed
+# (e.g. https://www.iimjobs.com/jobfeed?minexp=2&maxexp=3&_r=fi72stfujq5)
+FEED_URL = os.getenv("IIMJOBS_FEED_URL", f"{BASE_URL}/j/?freshness=7")
 OUTPUT_DIR = Path("output")
 DAYS_BACK = 7
 REQUEST_DELAY = 1.5  # seconds between page requests (be respectful)
@@ -294,15 +297,12 @@ def fetch_all_jobs(page) -> list[dict]:
     cutoff = datetime.now() - timedelta(days=DAYS_BACK)
     page_num = 1
 
-    print(f"\n[*] Collecting jobs posted after {cutoff.strftime('%Y-%m-%d')} ...")
+    print(f"\n[*] Feed URL : {FEED_URL}")
+    print(f"[*] Collecting jobs posted after {cutoff.strftime('%Y-%m-%d')} ...")
     print(f"[*] Starting pagination ...\n")
 
-    # iimjobs.com supports a "freshness" query param — try using it to pre-filter
-    # Common param: ?freshness=7 (days). Fall back to manual date checking if absent.
-    base_jobs_url = f"{BASE_URL}/j/?freshness={DAYS_BACK}"
-
     while True:
-        url = f"{base_jobs_url}&page={page_num}" if page_num > 1 else base_jobs_url
+        url = f"{FEED_URL}&page={page_num}" if page_num > 1 else FEED_URL
         print(f"[*] Page {page_num}: {url}")
 
         try:
