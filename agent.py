@@ -475,8 +475,8 @@ def fetch_all_jobs(page) -> list[dict]:
             print("[!] No job cards found on this page. Stopping pagination.")
             break
 
-        stop_pagination = False
         page_jobs_added = 0
+        old_count = 0
 
         for card in cards:
             job = extract_card(card)
@@ -485,23 +485,21 @@ def fetch_all_jobs(page) -> list[dict]:
 
             date_text = job.get("posted_date", "")
 
-            # If we can parse the date and it's older than our window, stop
+            # The feed is sorted by relevance, not date — never stop early.
+            # Collect everything; filter by date once all cards are processed.
             if date_text and is_older_than_n_days(date_text):
-                print(f"  [!] Found old job ('{date_text}'). Stopping pagination.")
-                stop_pagination = True
-                break
+                old_count += 1
+                title = job.get("title", "Unknown")
+                print(f"  [~] Skipping old job ('{date_text}'): {title}")
+                continue
 
-            # Accept the job (within window, or date unreadable — include to be safe)
             jobs.append(job)
             page_jobs_added += 1
             title = job.get("title", "Unknown")
             company = job.get("company", "Unknown")
             print(f"  [+] {title} @ {company}  [{date_text}]")
 
-        print(f"  -> Added {page_jobs_added} jobs from page {page_num}")
-
-        if stop_pagination:
-            break
+        print(f"  -> Added {page_jobs_added} new jobs, skipped {old_count} old jobs on page {page_num}")
 
         # Check for a "next page" link — if absent, we've hit the last page
         next_link = page.locator("a[rel='next'], a:text-is('Next'), .pagination .next").first
