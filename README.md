@@ -15,7 +15,7 @@ An AI agent that logs in to [iimjobs.com](https://www.iimjobs.com) and fetches a
 
 ```bash
 pip install -r requirements.txt
-playwright install chromium
+python -m playwright install chromium
 ```
 
 ### 2. Configure credentials

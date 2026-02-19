@@ -10,7 +10,7 @@ Usage:
 
 Requirements:
     - .env file with IIMJOBS_EMAIL and IIMJOBS_PASSWORD set
-    - Playwright installed: pip install playwright && playwright install chromium
+    - Playwright installed: pip install playwright && python -m playwright install chromium
 """
 
 import json
