@@ -1,0 +1,23 @@
+# Credentials - NEVER commit this
+.env
+
+# Output directory (job results)
+output/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Playwright browser binaries
+/ms-playwright/
+playwright-browsers/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
