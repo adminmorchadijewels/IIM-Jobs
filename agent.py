@@ -187,14 +187,19 @@ def login(page) -> bool:
     )
     page.locator(submit_sel).first.click()
 
-    # Wait for page to settle
-    page.wait_for_load_state("domcontentloaded", timeout=15000)
-    time.sleep(1.5)
+    # Wait for page to settle after submit
+    try:
+        page.wait_for_load_state("networkidle", timeout=15000)
+    except PlaywrightTimeoutError:
+        page.wait_for_load_state("domcontentloaded", timeout=10000)
+    time.sleep(2)
 
     # Verify login success
     post_url = page.url
     logout_visible = page.locator(
-        "a:text-is('Logout'), a:text-is('Sign Out'), a[href*='logout'], a[href*='signout']"
+        "a:text-is('Logout'), a:text-is('Sign Out'), "
+        "a[href*='logout'], a[href*='signout'], "
+        "[class*='logout'], [class*='sign-out']"
     ).count()
 
     if logout_visible > 0 or "dashboard" in post_url or "profile" in post_url:
@@ -203,12 +208,21 @@ def login(page) -> bool:
 
     # Check for error banners
     error_el = page.locator(".error, .alert-danger, [class*='error-msg'], [class*='login-error']").first
-    if error_el.count() > 0 and error_el.is_visible(timeout=1000):
-        print(f"[ERROR] Login failed: {error_el.text_content().strip()}")
+    if error_el.count() > 0:
+        try:
+            if error_el.is_visible(timeout=2000):
+                print(f"[ERROR] Login failed: {error_el.text_content().strip()}")
+                return False
+        except Exception:
+            pass
+
+    # Still on login page → failed
+    if "login" in page.url.lower() or "signin" in page.url.lower():
+        print("[ERROR] Login failed — still on login page after submit.")
         return False
 
-    # If we're not obviously on an error page, assume success
-    print("[*] Login status unclear — proceeding anyway.")
+    # Otherwise, assume success
+    print(f"[*] Login status unclear (URL: {page.url}) — proceeding anyway.")
     return True
 
 
@@ -307,21 +321,39 @@ def fetch_all_jobs(page) -> list[dict]:
 
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=25000)
-            page.wait_for_load_state("networkidle", timeout=15000)
+            # Give JS-rendered content time to appear
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except PlaywrightTimeoutError:
+                pass  # networkidle can be flaky; carry on
         except PlaywrightTimeoutError:
             print(f"[!] Timeout loading page {page_num}. Stopping.")
             break
 
+        # Small extra wait for dynamic content
+        time.sleep(2)
+
         # Collect job card elements — try multiple selector strategies
         card_selectors = [
+            # iimjobs specific
             ".job-list-item",
             ".job-card",
             "[class*='job-item']",
+            "[class*='jobItem']",
+            "[class*='job_item']",
             "li.job",
             "div[data-job-id]",
+            "div[data-jobid]",
             "article.job",
             ".jobs-list > li",
             ".result",
+            ".jobTuple",
+            ".jobTupleHeader",
+            # Generic fallbacks — any list-item/div containing a job link
+            "li:has(a[href*='/job/'])",
+            "li:has(a[href*='/j/'])",
+            "div:has(a[href*='/job/'])",
+            "article:has(a[href*='/job/'])",
         ]
         cards = []
         for sel in card_selectors:
@@ -332,6 +364,20 @@ def fetch_all_jobs(page) -> list[dict]:
                 break
 
         if not cards:
+            # Save debug snapshot so we can inspect the actual HTML
+            debug_dir = OUTPUT_DIR / "debug"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            screenshot_path = debug_dir / f"page{page_num}_screenshot.png"
+            html_path = debug_dir / f"page{page_num}_source.html"
+            try:
+                page.screenshot(path=str(screenshot_path), full_page=True)
+                html_path.write_text(page.content(), encoding="utf-8")
+                print(f"[!] No job cards found. Debug files saved:")
+                print(f"    Screenshot : {screenshot_path}")
+                print(f"    HTML source: {html_path}")
+                print("[!] Open the HTML file to inspect the actual page structure.")
+            except Exception as dbg_err:
+                print(f"[!] Could not save debug snapshot: {dbg_err}")
             print("[!] No job cards found on this page. Stopping pagination.")
             break
 
