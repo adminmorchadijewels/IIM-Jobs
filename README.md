@@ -16,6 +16,15 @@ An AI agent that logs in to [iimjobs.com](https://www.iimjobs.com) and fetches a
 ```bash
 pip install -r requirements.txt
 python -m playwright install chromium
+python -m playwright install-deps chromium   # installs required OS libraries (needs sudo)
+```
+
+> **GitHub Codespaces / Linux with no root:** If `install-deps` fails, run `setup.sh` instead (see below).
+
+#### Alternative — one-shot setup script
+
+```bash
+bash setup.sh
 ```
 
 ### 2. Configure credentials
